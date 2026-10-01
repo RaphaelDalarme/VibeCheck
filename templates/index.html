@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vibe Check — Lobios</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Arial, sans-serif;
+      background: #0c1017;
+      color: #edf2fa;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    main { max-width: 1120px; margin: auto; padding: 40px 20px; }
+    header { margin-bottom: 32px; }
+    h1 { font-size: clamp(32px, 6vw, 54px); margin: 12px 0; }
+    h2 { margin-top: 0; }
+    p { line-height: 1.6; }
+    .muted { color: #aeb9ca; }
+    .tag { color: #99f5c4; letter-spacing: 2px; font-size: 12px; }
+    .grid { display: grid; grid-template-columns: 1fr 1.3fr; gap: 20px; }
+    .panel {
+      background: #151c28; border: 1px solid #293346;
+      border-radius: 18px; padding: 24px; margin-bottom: 20px;
+    }
+    label { display: block; margin: 18px 0 8px; }
+    input {
+      width: 100%; padding: 13px; border-radius: 9px;
+      border: 1px solid #3b485e; background: #0c121c; color: white;
+    }
+    button, .download {
+      display: inline-block; border: 0; border-radius: 8px;
+      padding: 11px 14px; background: #9af4c5; color: #102719;
+      font-weight: bold; cursor: pointer; text-decoration: none;
+      margin: 6px 6px 0 0;
+    }
+    button:disabled { opacity: .5; cursor: wait; }
+    .secondary { background: #303d52; color: white; }
+    .danger { background: #533039; color: #ffd8df; }
+    .item { border-top: 1px solid #354056; padding: 18px 0; }
+    .item strong, .item small { display: block; overflow-wrap: anywhere; }
+    .item small { color: #b8c4d5; margin: 8px 0; }
+    .finding {
+      border-left: 3px solid #ffc879; background: #101722;
+      padding: 16px; margin: 14px 0; border-radius: 6px;
+    }
+    .finding.alto { border-left-color: #ff899e; }
+    #status { min-height: 24px; color: #bdebd3; }
+    #report { overflow-wrap: anywhere; }
+    @media (max-width: 760px) {
+      .grid { grid-template-columns: 1fr; }
+      main { padding: 24px 14px; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <span class="tag">LOBIOS / WEB SERVICES</span>
+    <h1>Vibe Check<span style="color:#9af4c5">.</span></h1>
+    <p class="muted">Uma revisão inicial dos riscos no seu código Python.</p>
+  </header>
+
+  <div class="grid">
+    <div>
+      <section class="panel">
+        <h2 id="form-title">Nova análise</h2>
+        <form id="form">
+          <label for="name">Nome da análise</label>
+          <input id="name" name="nome" maxlength="100" required
+                 placeholder="Ex.: API de cadastro">
+
+          <label for="file">Arquivo Python — até 100 KB</label>
+          <input id="file" name="arquivo" type="file" accept=".py" required>
+
+          <p class="muted">O arquivo será lido, sem executar suas instruções.</p>
+          <button id="submit" type="submit">Analisar código</button>
+          <button id="cancel" class="secondary" type="button" hidden>
+            Cancelar edição
+          </button>
+        </form>
+      </section>
+      <section class="panel">
+        <h2>Histórico</h2>
+        <div id="history">Carregando...</div>
+      </section>
+    </div>
+
+    <section class="panel">
+      <h2>Relatório</h2>
+      <div id="report">
+        <p class="muted">Envie um arquivo ou abra uma análise do histórico.</p>
+      </div>
+    </section>
+  </div>
+  <p id="status" role="status" aria-live="polite"></p>
+  <p class="muted">
+    Protótipo acadêmico. Os achados precisam de revisão humana.
+    Nenhum achado não significa ausência de vulnerabilidades.
+  </p>
+</main>
+
+<script>
+  const $ = id => document.getElementById(id);
+  let editing = null;
+
+  function element(tag, text, className) {
+    const node = document.createElement(tag);
+    node.textContent = text;
+    if (className) node.className = className;
+    return node;
+  }
+
+  function status(text) { $("status").textContent = text; }
+
+  async function api(url, options = {}) {
+    const response = await fetch(url, options);
+    const data = response.status === 204 ? null : await response.json();
+    if (!response.ok) throw new Error(data?.erro || "Erro na requisição.");
+    return data;
+  }
+
+  async function attempt(action) {
+    try { await action(); }
+    catch (error) { status(error.message); }
+  }
+
+  function resetForm() {
+    editing = null;
+    $("form").reset();
+    $("form-title").textContent = "Nova análise";
+    $("submit").textContent = "Analisar código";
+    $("cancel").hidden = true;
+  }
+
+  function showReport(data) {
+    const target = $("report");
+    target.replaceChildren();
+    target.append(
+      element("h3", data.nome),
+      element("p", `${data.arquivo} • Análise #${data.id}`, "muted"),
+      element("p",
+        `${data.resumo.total} achado(s) · ${data.resumo.alto} alto(s) · ` +
+        `${data.resumo.medio} médio(s)`),
+      element("p", `Classificação: ${data.resumo.risco_geral}`)
+    );
+
+    for (const finding of data.achados) {
+      const box = element("article", "", `finding ${finding.risco}`);
+      box.append(
+        element("strong",
+          `${finding.risco.toUpperCase()} · Linha ${finding.linha} · ` +
+          finding.regra),
+        element("h3", finding.titulo),
+        element("p", finding.descricao),
+        element("p", `Recomendação: ${finding.recomendacao}`)
+      );
+      target.append(box);
+    }
+
+    target.append(element("p", data.aviso, "muted"));
+    const link = element("a", "Baixar relatório JSON", "download");
+    link.href = `/api/analises/${data.id}/relatorio`;
+    target.append(link);
+  }
+
+  async function refresh() {
+    const items = await api("/api/analises");
+    const target = $("history");
+    target.replaceChildren();
+    if (!items.length) {
+      target.append(element("p", "Nenhuma análise cadastrada.", "muted"));
+    }
+
+    for (const item of items) {
+      const row = element("div", "", "item");
+      row.append(
+        element("strong", item.nome),
+        element("small",
+          `#${item.id} · ${item.total} achado(s) · ${item.criado_em} UTC`)
+      );
+
+      const view = element("button", "Ver", "secondary");
+      view.onclick = () => attempt(async () => {
+        showReport(await api(`/api/analises/${item.id}`));
+      });
+
+      const edit = element("button", "Atualizar", "secondary");
+      edit.onclick = () => {
+        editing = item.id;
+        $("name").value = item.nome;
+        $("file").value = "";
+        $("form-title").textContent = `Atualizar análise #${item.id}`;
+        $("submit").textContent = "Salvar e analisar novamente";
+        $("cancel").hidden = false;
+        $("form").scrollIntoView({behavior: "smooth"});
+        status("Selecione o arquivo que substituirá a análise atual.");
+      };
+
+      const remove = element("button", "Excluir", "danger");
+      remove.onclick = () => attempt(async () => {
+        if (!confirm(`Excluir a análise #${item.id}?`)) return;
+        await api(`/api/analises/${item.id}`, {method: "DELETE"});
+        if (editing === item.id) resetForm();
+        $("report").replaceChildren(element("p", "Selecione uma análise."));
+        await refresh();
+        status("Análise excluída.");
+      });
+
+      row.append(view, edit, remove);
+      target.append(row);
+    }
+  }
+
+  $("cancel").onclick = resetForm;
+  $("form").onsubmit = async event => {
+    event.preventDefault();
+    $("submit").disabled = true;
+    status("Analisando...");
+    try {
+      const data = await api(
+        editing === null ? "/api/analises" : `/api/analises/${editing}`,
+        {
+          method: editing === null ? "POST" : "PUT",
+          body: new FormData($("form"))
+        }
+      );
+      showReport(data);
+      resetForm();
+      await refresh();
+      status("Análise salva.");
+    } catch (error) {
+      status(error.message);
+    } finally {
+      $("submit").disabled = false;
+    }
+  };
+
+  attempt(refresh);
+</script>
+</body>
+</html>
